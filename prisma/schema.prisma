@@ -1,10 +1,86 @@
-// Placeholder Prisma schema. Define your datasource and models here when ready.
-// Example:
-// datasource db {
-//   provider = "postgresql"
-//   url      = env("DATABASE_URL")
-// }
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
 
-// generator client {
-//   provider = "prisma-client-js"
-// }
+datasource db {
+  provider = "postgresql"
+}
+
+model dim_factory {
+  factory_id   Int    @id @default(autoincrement())
+  factory_name String @unique
+  factory_type String?
+  supplier_group String?
+  brand        String?
+  event        String?
+  created_at   DateTime @default(now())
+  fact_labor_metrics fact_labor_metrics[] // Only Needs a 'back-relation' cause its the One side (Parent)
+}
+
+model dim_location {
+  location_id        Int                 @id @default(autoincrement())
+  address            String              @db.VarChar(255)
+  city               String              @db.VarChar(100)
+  state              String              @db.VarChar(100)
+  postal_code        String              @db.VarChar(50)
+  country            String              @db.VarChar(100)
+  region             String              @db.VarChar(50)
+  fact_labor_metrics fact_labor_metrics[] // Only Needs a 'back-relation' cause its the One side (Parent) @unique
+  @@unique([address, city, state, postal_code, country, region])
+}
+
+model dim_product {
+  product_id         Int                  @id @default(autoincrement())
+  product_type       String?              @db.VarChar(100) @unique
+  fact_labor_metrics fact_labor_metrics[] // Only Needs a 'back-relation' cause its the One side (Parent) @unique
+}
+
+model dim_time {
+  time_id            Int                  @id @default(autoincrement())
+  date               DateTime             @db.Date @unique
+  month              Int
+  month_name         String               @db.VarChar(20)
+  quarter            Int
+  year               Int
+  fact_labor_metrics fact_labor_metrics[] // Only Needs a 'back-relation' cause its the One side (Parent)
+}
+
+model fact_labor_metrics {
+  fact_id               Int           @id @default(autoincrement())
+  time_id               Int?
+  location_id           Int?
+  factory_id            Int?
+  product_id            Int?
+  dim_factory           dim_factory?  @relation(fields: [factory_id], references: [factory_id], onDelete: NoAction, onUpdate: NoAction)
+  dim_location          dim_location? @relation(fields: [location_id], references: [location_id], onDelete: NoAction, onUpdate: NoAction)
+  dim_product           dim_product?  @relation(fields: [product_id], references: [product_id], onDelete: NoAction, onUpdate: NoAction)
+  dim_time              dim_time?     @relation(fields: [time_id], references: [time_id], onDelete: NoAction, onUpdate: NoAction)
+  total_workers         Int?
+  line_workers          Int?
+  female_workers_count  Int?
+  migrant_workers_count Int?
+  @@unique([time_id, location_id, factory_id, product_id]) // Suppossed to be only one record per month, so this should suffice to ensure that
+}
+
+// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model staging_imap {
+  staging_id Int    @id @default(autoincrement())
+  factory_name   String?
+  factory_type   String?
+  product_type   String?
+  brand          String?
+  event          String?
+  supplier_group String?
+  address        String?
+  city           String?
+  state          String?
+  postal_code    String?
+  country_region String?
+  region         String?
+  total_workers  Int?
+  line_workers   Int?
+  pct_female     Decimal? @db.Decimal(5, 2)
+  pct_migrant    Decimal? @db.Decimal(5, 2)
+
+}
