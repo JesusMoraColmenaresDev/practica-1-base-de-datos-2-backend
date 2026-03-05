@@ -36,6 +36,7 @@ app.get("/", (_req, res) => {
 
 app.post("/upload", upload.single("file"), async (req, res) => {
 	const file = req.file;
+	const { timeDate } = (req.body ?? {}) as { timeDate?: string };
 	if (!file)
 		return res
 			.status(400)
@@ -48,7 +49,10 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 		const objects = XLSX.utils.sheet_to_json<
 			Record<string, string | number | null>
 		>(sheet, { range: 1, defval: null });
-		const result = await saveRows(objects);
+		const result = await saveRows(objects, {
+			processAfterInsert: true,
+			timeDate,
+		});
 
 		return res.json({
 			rows: objects,
@@ -64,11 +68,12 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
 // Accept uploads as JSON { filename, type, size, data: base64 }
 app.post("/upload-json", async (req, res) => {
-	const { filename, type, size, data } = req.body as {
+	const { filename, type, size, data, timeDate } = req.body as {
 		filename?: string;
 		type?: string;
 		size?: number;
 		data?: string;
+		timeDate?: string;
 	};
 	if (!data) return res.status(400).json({ error: "No base64 data provided" });
 
@@ -80,7 +85,10 @@ app.post("/upload-json", async (req, res) => {
 		const objects = XLSX.utils.sheet_to_json<
 			Record<string, string | number | null>
 		>(sheet, { range: 1, defval: null });
-		const result = await saveRows(objects);
+		const result = await saveRows(objects, {
+			processAfterInsert: true,
+			timeDate,
+		});
 
 		const columns = objects.length ? Object.keys(objects[0]) : [];
 		return res.json({

@@ -13,11 +13,37 @@ const prisma = new PrismaClient({ adapter });
 export interface SaveRowsResult {
 	inserted: number;
 	errors: Array<{ index: number; reason: string }>;
+	processed?: boolean;
+	timeDate?: string;
 }
 
 export interface ProcessImportResult {
 	timeDate: string;
 	processed: boolean;
+}
+
+interface SaveRowsOptions {
+	chunkSize?: number;
+	processAfterInsert?: boolean;
+	timeDate?: string;
+}
+
+function resolveImportDate(timeDate?: string): string {
+	const selectedDate =
+		timeDate && timeDate.trim() !== ""
+			? timeDate.trim()
+			: new Date().toISOString().split("T")[0];
+
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
+		throw new Error("timeDate must use format YYYY-MM-DD");
+	}
+
+	const parsedDate = new Date(`${selectedDate}T00:00:00.000Z`);
+	if (Number.isNaN(parsedDate.getTime())) {
+		throw new Error("timeDate is not a valid date");
+	}
+
+	return selectedDate;
 }
 
 function normalizeKey(value: string): string {
@@ -79,11 +105,17 @@ function asFloat(value: unknown): number | null {
 
 export async function saveRows(
 	rows: Record<string, unknown>[],
-	chunkSize = 2000,
+	options: SaveRowsOptions = {},
 ): Promise<SaveRowsResult> {
 	if (!Array.isArray(rows)) {
 		throw new Error("rows must be an array");
 	}
+
+	const chunkSize = options.chunkSize ?? 2000;
+	const processAfterInsert = options.processAfterInsert ?? false;
+	const selectedDate = processAfterInsert
+		? resolveImportDate(options.timeDate)
+		: undefined;
 
 	const mappedRows = rows.map((row) => ({
 		factory_name: asText(
@@ -170,47 +202,60 @@ export async function saveRows(
 	let inserted = 0;
 	const errors: Array<{ index: number; reason: string }> = [];
 
-	for (let index = 0; index < mappedRows.length; index += chunkSize) {
-		const chunk = mappedRows.slice(index, index + chunkSize);
+	await prisma.$transaction(async (tx) => {
+		for (let index = 0; index < mappedRows.length; index += chunkSize) {
+			const chunk = mappedRows.slice(index, index + chunkSize);
 
-		try {
-			const result = await prisma.staging_imap.createMany({
-				data: chunk,
-			});
-			inserted += result.count ?? 0;
-		} catch (error) {
-			errors.push({
-				index,
-				reason: error instanceof Error ? error.message : String(error),
-			});
+			try {
+				const result = await tx.staging_imap.createMany({
+					data: chunk,
+				});
+				inserted += result.count ?? 0;
+			} catch (error) {
+				errors.push({
+					index,
+					reason: error instanceof Error ? error.message : String(error),
+				});
+			}
 		}
-	}
+
+		if (processAfterInsert) {
+			if (errors.length > 0) {
+				throw new Error(
+					"Import processing skipped because one or more createMany chunks failed",
+				);
+			}
+
+			await tx.$executeRawUnsafe(
+				`SELECT public.process_import($1::date)`,
+				selectedDate,
+			);
+		}
+	});
 
 	console.log(
 		`Staging insert complete. Inserted: ${inserted}. Errors: ${errors.length}.`,
 	);
-	return { inserted, errors };
+
+	if (processAfterInsert) {
+		console.log(`process_import completed for date ${selectedDate}`);
+	}
+
+	return {
+		inserted,
+		errors,
+		processed: processAfterInsert,
+		timeDate: selectedDate,
+	};
 }
 
 export async function processImport(
 	timeDate?: string,
 ): Promise<ProcessImportResult> {
-	const selectedDate =
-		timeDate && timeDate.trim() !== ""
-			? timeDate.trim()
-			: new Date().toISOString().split("T")[0];
-
-	if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
-		throw new Error("timeDate must use format YYYY-MM-DD");
-	}
-
-	const parsedDate = new Date(`${selectedDate}T00:00:00.000Z`);
-	if (Number.isNaN(parsedDate.getTime())) {
-		throw new Error("timeDate is not a valid date");
-	}
+	const selectedDate = resolveImportDate(timeDate);
 
 	await prisma.$executeRawUnsafe(
-		`SELECT process_import($1::date)`,
+		`SELECT public.process_import($1::date)`,
 		selectedDate,
 	);
 
