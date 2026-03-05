@@ -87,6 +87,25 @@ function asText(value: unknown): string | null {
 	return normalized === "" ? null : normalized;
 }
 
+function asLowerText(value: unknown): string | null {
+	const text = asText(value);
+	return text === null ? null : text.toLowerCase();
+}
+
+function asUpperText(value: unknown): string | null {
+	const text = asText(value);
+	return text === null ? null : text.toUpperCase();
+}
+
+function asUpperCity(value: unknown): string | null {
+	const text = asText(value);
+	if (text === null) return null;
+
+	// Some rows contain duplicated city values split by '/'. Keep the first value.
+	const base = text.split("/")[0]?.trim() ?? "";
+	return base === "" ? null : base.toUpperCase();
+}
+
 function asInt(value: unknown): number | null {
 	if (value === null || value === undefined || String(value).trim() === "")
 		return null;
@@ -121,10 +140,10 @@ export async function saveRows(
 		factory_name: asText(
 			getValue(row, ["Factory Name", "factory_name", "Factory"]),
 		),
-		factory_type: asText(
+		factory_type: asUpperText(
 			getValue(row, ["Factory Type", "factory_type", "Type"]),
 		),
-		product_type: asText(
+		product_type: asLowerText(
 			getValue(row, [
 				"Product Type",
 				"Product Type Type",
@@ -132,20 +151,20 @@ export async function saveRows(
 				"Product",
 			]),
 		),
-		brand: asText(
+		brand: asUpperText(
 			getValue(row, ["Brand", "Nike, Inc. Brand(s)", "Brand(s)", "brand"]),
 		),
-		event: asText(getValue(row, ["Event", "Events", "event"])),
-		supplier_group: asText(
+		event: asLowerText(getValue(row, ["Event", "Events", "event"])),
+		supplier_group: asUpperText(
 			getValue(row, ["Supplier Group", "supplier_group", "Supplier"]),
 		),
-		address: asText(getValue(row, ["Address", "address"])),
-		city: asText(getValue(row, ["City", "city"])),
-		state: asText(getValue(row, ["State", "state"])),
+		address: asLowerText(getValue(row, ["Address", "address"])),
+		city: asUpperCity(getValue(row, ["City", "city"])),
+		state: asLowerText(getValue(row, ["State", "state"])),
 		postal_code: asText(
 			getValue(row, ["Postal Code", "postal_code", "Zip", "ZIP Code"]),
 		),
-		country_region: asText(
+		country_region: asUpperText(
 			getValue(row, [
 				"Country/Region",
 				"Country / Region",
@@ -155,7 +174,7 @@ export async function saveRows(
 				"country",
 			]),
 		),
-		region: asText(getValue(row, ["Region", "region"])),
+		region: asUpperText(getValue(row, ["Region", "region"])),
 		total_workers: asInt(
 			getValue(row, ["Total Workers", "total_workers", "Workers Total"]),
 		),
