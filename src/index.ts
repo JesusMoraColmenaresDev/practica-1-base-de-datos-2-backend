@@ -1,8 +1,9 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import multer from "multer";
 import XLSX from "xlsx";
-import { saveRows } from "./prismaService";
+import { processImport, saveRows } from "./prismaService";
 
 const app = express();
 // Allow requests from any origin by reflecting the request origin and enable credentials
@@ -47,9 +48,14 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 		const objects = XLSX.utils.sheet_to_json<
 			Record<string, string | number | null>
 		>(sheet, { range: 1, defval: null });
-		await saveRows(objects);
+		const result = await saveRows(objects);
 
-		return res.json({ rows: objects, count: objects.length });
+		return res.json({
+			rows: objects,
+			count: objects.length,
+			inserted: result.inserted,
+			errors: result.errors,
+		});
 	} catch (err) {
 		console.error("Failed to parse XLSX:", err);
 		return res.status(500).json({ error: "Failed to parse XLSX" });
@@ -74,17 +80,54 @@ app.post("/upload-json", async (req, res) => {
 		const objects = XLSX.utils.sheet_to_json<
 			Record<string, string | number | null>
 		>(sheet, { range: 1, defval: null });
-		await saveRows(objects);
+		const result = await saveRows(objects);
 
 		const columns = objects.length ? Object.keys(objects[0]) : [];
-		return res.json({ rows: objects, count: objects.length, columns });
+		return res.json({
+			rows: objects,
+			count: objects.length,
+			columns,
+			inserted: result.inserted,
+			errors: result.errors,
+		});
 	} catch (err) {
 		console.error("Failed to parse XLSX from base64 JSON:", err);
 		return res.status(500).json({ error: "Failed to parse XLSX" });
 	}
 });
 
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () =>
-	console.log(`API listening on http://localhost:${PORT}`),
-);
+app.post("/process-import", async (req, res) => {
+	const { timeDate } = (req.body ?? {}) as { timeDate?: string };
+
+	try {
+		const result = await processImport(timeDate);
+		return res.json(result);
+	} catch (err) {
+		const message =
+			err instanceof Error ? err.message : "Failed to process import";
+		return res.status(400).json({ error: message });
+	}
+});
+
+const PORT = Number(process.env.PORT ?? 4000);
+
+function startServer(port: number): void {
+	const server = app.listen(port, () =>
+		console.log(`API listening on http://localhost:${port}`),
+	);
+
+	server.on("error", (error: NodeJS.ErrnoException) => {
+		if (error.code === "EADDRINUSE") {
+			const nextPort = port + 1;
+			console.warn(
+				`Port ${port} is in use, retrying on http://localhost:${nextPort}`,
+			);
+			startServer(nextPort);
+			return;
+		}
+
+		throw error;
+	});
+}
+
+startServer(PORT);
