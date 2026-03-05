@@ -5,6 +5,67 @@ import multer from "multer";
 import XLSX from "xlsx";
 import { processImport, saveRows } from "./prismaService";
 
+const MONTH_TO_NUMBER: Record<string, string> = {
+	JAN: "01",
+	FEB: "02",
+	MAR: "03",
+	APR: "04",
+	MAY: "05",
+	JUN: "06",
+	JUL: "07",
+	AUG: "08",
+	SEP: "09",
+	OCT: "10",
+	NOV: "11",
+	DEC: "12",
+};
+
+function extractReportTimeDate(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+
+	const normalized = value.replace(/\s+/g, " ").trim();
+	const match = normalized.match(/Data\s+As\s+Of\s+([A-Za-z]+)\s+(\d{4})/i);
+	if (!match) return undefined;
+
+	const monthKey = match[1].slice(0, 3).toUpperCase();
+	const month = MONTH_TO_NUMBER[monthKey];
+	if (!month) return undefined;
+
+	const year = match[2];
+	return `${year}-${month}-01`;
+}
+
+function getSheetHeaderMetadata(sheet: XLSX.WorkSheet): {
+	rawHeader?: string;
+	reportTimeDate?: string;
+} {
+	const rawCell = sheet["A1"]?.v ?? sheet["A1"]?.w;
+	const rawHeader =
+		rawCell === undefined || rawCell === null ? undefined : String(rawCell);
+	const reportTimeDate = extractReportTimeDate(rawHeader);
+
+	return { rawHeader, reportTimeDate };
+}
+
+function getTodayIsoDate(): string {
+	return new Date().toISOString().split("T")[0];
+}
+
+function resolveEffectiveTimeDate(
+	reportTimeDate?: string,
+	requestTimeDate?: string,
+): { timeDate: string; source: "report_header" | "request" | "fallback_now" } {
+	if (reportTimeDate) {
+		return { timeDate: reportTimeDate, source: "report_header" };
+	}
+
+	if (requestTimeDate && requestTimeDate.trim() !== "") {
+		return { timeDate: requestTimeDate.trim(), source: "request" };
+	}
+
+	return { timeDate: getTodayIsoDate(), source: "fallback_now" };
+}
+
 const app = express();
 // Allow requests from any origin by reflecting the request origin and enable credentials
 app.use(
@@ -46,12 +107,27 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 		const workbook = XLSX.read(file.buffer, { type: "buffer" });
 		const sheetName = workbook.SheetNames[0];
 		const sheet = workbook.Sheets[sheetName];
+		const { rawHeader, reportTimeDate } = getSheetHeaderMetadata(sheet);
+		const resolvedDate = resolveEffectiveTimeDate(reportTimeDate, timeDate);
+
+		if (rawHeader) {
+			console.log("Report header cell A1:", rawHeader);
+		}
+
+		if (reportTimeDate) {
+			console.log("Extracted report timeDate from header:", reportTimeDate);
+		}
+
+		console.log(
+			`Using timeDate for processing: ${resolvedDate.timeDate} (source: ${resolvedDate.source})`,
+		);
+
 		const objects = XLSX.utils.sheet_to_json<
 			Record<string, string | number | null>
 		>(sheet, { range: 1, defval: null });
 		const result = await saveRows(objects, {
 			processAfterInsert: true,
-			timeDate,
+			timeDate: resolvedDate.timeDate,
 		});
 
 		return res.json({
@@ -59,6 +135,10 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 			count: objects.length,
 			inserted: result.inserted,
 			errors: result.errors,
+			processed: result.processed,
+			timeDate: result.timeDate,
+			reportTimeDate,
+			reportHeader: rawHeader,
 		});
 	} catch (err) {
 		console.error("Failed to parse XLSX:", err);
@@ -82,12 +162,27 @@ app.post("/upload-json", async (req, res) => {
 		const workbook = XLSX.read(buffer, { type: "buffer" });
 		const sheetName = workbook.SheetNames[0];
 		const sheet = workbook.Sheets[sheetName];
+		const { rawHeader, reportTimeDate } = getSheetHeaderMetadata(sheet);
+		const resolvedDate = resolveEffectiveTimeDate(reportTimeDate, timeDate);
+
+		if (rawHeader) {
+			console.log("Report header cell A1:", rawHeader);
+		}
+
+		if (reportTimeDate) {
+			console.log("Extracted report timeDate from header:", reportTimeDate);
+		}
+
+		console.log(
+			`Using timeDate for processing: ${resolvedDate.timeDate} (source: ${resolvedDate.source})`,
+		);
+
 		const objects = XLSX.utils.sheet_to_json<
 			Record<string, string | number | null>
 		>(sheet, { range: 1, defval: null });
 		const result = await saveRows(objects, {
 			processAfterInsert: true,
-			timeDate,
+			timeDate: resolvedDate.timeDate,
 		});
 
 		const columns = objects.length ? Object.keys(objects[0]) : [];
@@ -97,6 +192,10 @@ app.post("/upload-json", async (req, res) => {
 			columns,
 			inserted: result.inserted,
 			errors: result.errors,
+			processed: result.processed,
+			timeDate: result.timeDate,
+			reportTimeDate,
+			reportHeader: rawHeader,
 		});
 	} catch (err) {
 		console.error("Failed to parse XLSX from base64 JSON:", err);
